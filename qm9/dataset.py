@@ -1,6 +1,7 @@
-from torch.utils.data import DataLoader
+import torch
+from torch.utils.data import DataLoader, random_split
 from qm9.data.args import init_argparse
-from qm9.data.collate import PreprocessQM9
+from qm9.data.collate import Preprocess3RScan, PreprocessQM9
 from qm9.data.utils import initialize_datasets
 import os
 
@@ -26,7 +27,6 @@ def retrieve_dataloaders(cfg):
         if filter_n_atoms is not None:
             print("Retrieving molecules with only %d atoms" % filter_n_atoms)
             datasets = filter_atoms(datasets, filter_n_atoms)
-
         # Construct PyTorch dataloaders from datasets
         preprocess = PreprocessQM9(load_charges=cfg.include_charges)
         dataloaders = {split: DataLoader(dataset,
@@ -63,10 +63,30 @@ def retrieve_dataloaders(cfg):
                 shuffle=shuffle)
         del split_data
         charge_scale = None
+    elif cfg.dataset == '3rscan':
+        batch_size = cfg.batch_size
+        num_workers = cfg.num_workers
+        # Load dataset
+        print(os.getcwd())
+        dataset = torch.load(cfg.dataset_path)
+        # Split dataset
+        len_train = int(0.9 * len(dataset))
+        len_test = int(0.5 * (len(dataset) - len_train))
+        len_val = len(dataset) - len_train - len_test
+        train, test, val = random_split(dataset, [len_train, len_test, len_val], generator=torch.Generator().manual_seed(42))
+        datasets = {'train': train, 'test': test, 'val': val}
+        # Construct PyTorch dataloaders from datasets
+        preprocess = Preprocess3RScan()
+        dataloaders = {split: DataLoader(dataset,
+                                         batch_size=batch_size,
+                                         shuffle=(split == 'train'),
+                                         num_workers=num_workers,
+                                         collate_fn=preprocess.collate_fn)
+                             for split, dataset in datasets.items()}
     else:
         raise ValueError(f'Unknown dataset {cfg.dataset}')
 
-    return dataloaders, charge_scale
+    return dataloaders, None
 
 
 def filter_atoms(datasets, n_nodes):

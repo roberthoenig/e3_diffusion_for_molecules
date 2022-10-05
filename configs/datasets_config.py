@@ -150,5 +150,7 @@ def get_dataset_info(dataset_name, remove_h):
             return qm9_second_half
         else:
             raise Exception('Missing config for %s without hydrogens' % dataset_name)
+    elif dataset_name == '3rscan':
+        return None
     else:
         raise Exception("Wrong dataset %s" % dataset_name)

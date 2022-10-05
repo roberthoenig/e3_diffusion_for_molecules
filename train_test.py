@@ -17,13 +17,16 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
     model_dp.train()
     model.train()
     nll_epoch = []
+    loss_vals = []
     n_iterations = len(loader)
     for i, data in enumerate(loader):
         x = data['positions'].to(device, dtype)
-        node_mask = data['atom_mask'].to(device, dtype).unsqueeze(2)
+        scales = data['scales'].to(device, dtype)
+        rotations = data['rotations'].to(device, dtype)
+        node_mask = data['scene_mask'].to(device, dtype).unsqueeze(2)
         edge_mask = data['edge_mask'].to(device, dtype)
-        one_hot = data['one_hot'].to(device, dtype)
-        charges = (data['charges'] if args.include_charges else torch.zeros(0)).to(device, dtype)
+        one_hot = data['labels'].to(device, dtype)
+        # charges = (data['charges'] if args.include_charges else torch.zeros(0)).to(device, dtype)
 
         x = remove_mean_with_mask(x, node_mask)
 
@@ -36,10 +39,12 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         if args.data_augmentation:
             x = utils.random_rotation(x).detach()
 
-        check_mask_correct([x, one_hot, charges], node_mask)
+        # check_mask_correct([x, one_hot, charges], node_mask)
         assert_mean_zero_with_mask(x, node_mask)
-
-        h = {'categorical': one_hot, 'integer': charges}
+        # print("scales.shape", scales.shape)
+        # print("rotations.shape", rotations.shape)
+        # h = {'categorical': torch.ones(x.size(0), x.size(1), 1), 'continuous': torch.ones(x.size(0), x.size(1), 1)}
+        h = {'categorical': torch.ones(x.size(0), x.size(1), 0), 'continuous': torch.ones(x.size(0), x.size(1), 0)}
 
         if len(args.conditioning) > 0:
             context = qm9utils.prepare_context(args.conditioning, data, property_norms).to(device, dtype)
@@ -67,13 +72,14 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         if args.ema_decay > 0:
             ema.update_model_average(model_ema, model)
 
-        if i % args.n_report_steps == 0:
+        if i % args.n_report_steps == 0 and False:
             print(f"\rEpoch: {epoch}, iter: {i}/{n_iterations}, "
                   f"Loss {loss.item():.2f}, NLL: {nll.item():.2f}, "
                   f"RegTerm: {reg_term.item():.1f}, "
                   f"GradNorm: {grad_norm:.1f}")
         nll_epoch.append(nll.item())
-        if (epoch % args.test_epochs == 0) and (i % args.visualize_every_batch == 0) and not (epoch == 0 and i == 0):
+        loss_vals.append(loss.item())
+        if (epoch % args.test_epochs == 0) and (i % args.visualize_every_batch == 0) and not (epoch == 0 and i == 0) and False:
             start = time.time()
             if len(args.conditioning) > 0:
                 save_and_sample_conditional(args, device, model_ema, prop_dist, dataset_info, epoch=epoch)
@@ -92,6 +98,7 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         if args.break_train_epoch:
             break
     wandb.log({"Train Epoch NLL": np.mean(nll_epoch)}, commit=False)
+    return torch.tensor(loss_vals).mean()
 
 
 def check_mask_correct(variables, node_mask):
@@ -154,8 +161,8 @@ def save_and_sample_chain(model, args, device, dataset_info, prop_dist,
     one_hot, charges, x = sample_chain(args=args, device=device, flow=model,
                                        n_tries=1, dataset_info=dataset_info, prop_dist=prop_dist)
 
-    vis.save_xyz_file(f'outputs/{args.exp_name}/epoch_{epoch}_{batch_id}/chain/',
-                      one_hot, charges, x, dataset_info, id_from, name='chain')
+    # vis.save_xyz_file(f'outputs/{args.exp_name}/epoch_{epoch}_{batch_id}/chain/',
+                    #   one_hot, charges, x, dataset_info, id_from, name='chain')
 
     return one_hot, charges, x
 

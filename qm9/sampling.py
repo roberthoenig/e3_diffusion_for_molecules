@@ -57,6 +57,8 @@ def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
         n_nodes = 19
     elif args.dataset == 'geom':
         n_nodes = 44
+    elif args.dataset == '3rscan':
+        n_nodes = args.n_nodes
     else:
         raise ValueError()
 
@@ -74,37 +76,39 @@ def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
     edge_mask = edge_mask.repeat(n_samples, 1, 1).view(-1, 1).to(device)
 
     if args.probabilistic_model == 'diffusion':
-        one_hot, charges, x = None, None, None
-        for i in range(n_tries):
-            chain = flow.sample_chain(n_samples, n_nodes, node_mask, edge_mask, context, keep_frames=100)
+        one_hot, cont, x = None, None, None
+        for i in range(1):
+            chain = flow.sample_chain(n_samples, n_nodes, node_mask, edge_mask, context, keep_frames=flow.T)
             chain = reverse_tensor(chain)
 
             # Repeat last frame to see final sample better.
             chain = torch.cat([chain, chain[-1:].repeat(10, 1, 1)], dim=0)
-            x = chain[-1:, :, 0:3]
-            one_hot = chain[-1:, :, 3:-1]
-            one_hot = torch.argmax(one_hot, dim=2)
+            # x = chain[-1:, :, 0:3]
+            # one_hot = chain[-1:, :, 3:-1]
+            # one_hot = torch.argmax(one_hot, dim=2)
 
-            atom_type = one_hot.squeeze(0).cpu().detach().numpy()
-            x_squeeze = x.squeeze(0).cpu().detach().numpy()
-            mol_stable = check_stability(x_squeeze, atom_type, dataset_info)[0]
+            # atom_type = one_hot.squeeze(0).cpu().detach().numpy()
+            # x_squeeze = x.squeeze(0).cpu().detach().numpy()
+            # mol_stable = check_stability(x_squeeze, atom_type, dataset_info)[0]
 
             # Prepare entire chain.
+            # pos, cat, scale, rot
             x = chain[:, :, 0:3]
-            one_hot = chain[:, :, 3:-1]
-            one_hot = F.one_hot(torch.argmax(one_hot, dim=2), num_classes=len(dataset_info['atom_decoder']))
-            charges = torch.round(chain[:, :, -1:]).long()
+            one_hot = chain[:, :, 3:3+20]
+            one_hot = F.one_hot(torch.argmax(one_hot, dim=2), num_classes=20)
+            cont = chain[:, :, 3+20:3+20+4]
+            # charges = torch.round(chain[:, :, -1:]).long()
 
-            if mol_stable:
-                print('Found stable molecule to visualize :)')
-                break
-            elif i == n_tries - 1:
-                print('Did not find stable molecule, showing last sample.')
+            # if mol_stable:
+            #     print('Found stable molecule to visualize :)')
+            #     break
+            # elif i == n_tries - 1:
+            #     print('Did not find stable molecule, showing last sample.')
 
     else:
         raise ValueError
 
-    return one_hot, charges, x
+    return one_hot, cont, x
 
 
 def sample(args, device, generative_model, dataset_info,

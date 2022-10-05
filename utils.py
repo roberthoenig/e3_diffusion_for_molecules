@@ -2,6 +2,7 @@ import numpy as np
 import getpass
 import os
 import torch
+import logging
 
 # Folders
 def create_folders(args):
@@ -61,7 +62,7 @@ def gradient_clipping(flow, gradnorm_queue):
         gradnorm_queue.add(float(grad_norm))
 
     if float(grad_norm) > max_grad_norm:
-        print(f'Clipped gradient with value {grad_norm:.1f} '
+        logging.info(f'Clipped gradient with value {grad_norm:.1f} '
               f'while allowed {max_grad_norm:.1f}')
     return grad_norm
 

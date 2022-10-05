@@ -185,7 +185,7 @@ class PredefinedNoiseSchedule(torch.nn.Module):
         else:
             raise ValueError(noise_schedule)
 
-        print('alphas2', alphas2)
+        # print('alphas2', alphas2)
 
         sigmas2 = 1 - alphas2
 
@@ -194,7 +194,7 @@ class PredefinedNoiseSchedule(torch.nn.Module):
 
         log_alphas2_to_sigmas2 = log_alphas2 - log_sigmas2
 
-        print('gamma', -log_alphas2_to_sigmas2)
+        # print('gamma', -log_alphas2_to_sigmas2)
 
         self.gamma = torch.nn.Parameter(
             torch.from_numpy(-log_alphas2_to_sigmas2).float(),
@@ -258,7 +258,9 @@ class EnVariationalDiffusion(torch.nn.Module):
             dynamics: models.EGNN_dynamics_QM9, in_node_nf: int, n_dims: int,
             timesteps: int = 1000, parametrization='eps', noise_schedule='learned',
             noise_precision=1e-4, loss_type='vlb', norm_values=(1., 1., 1.),
-            norm_biases=(None, 0., 0.), include_charges=True):
+            norm_biases=(None, 0., 0.), include_charges=True,
+            n_cont = -1,
+            n_onehot = -1):
         super().__init__()
 
         assert loss_type in {'vlb', 'l2'}
@@ -282,7 +284,8 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         self.in_node_nf = in_node_nf
         self.n_dims = n_dims
-        self.num_classes = self.in_node_nf - self.include_charges
+        self.num_classes = n_onehot
+        self.n_cont = n_cont
 
         self.T = timesteps
         self.parametrization = parametrization
@@ -345,36 +348,42 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         # Casting to float in case h still has long or int type.
         h_cat = (h['categorical'].float() - self.norm_biases[1]) / self.norm_values[1] * node_mask
-        h_int = (h['integer'].float() - self.norm_biases[2]) / self.norm_values[2]
+        h_int = None
+        # h_int = (h['integer'].float() - self.norm_biases[2]) / self.norm_values[2]
+        # TODO: roberthoenig: Should we also multiply h_cont with node_mask?
+        # print("self.norm_biases", self.norm_biases)
+        # print("self.norm_values", self.norm_values)
+        # TODO: roberthoenig: Find the best norm_biases and norm_values
+        h_cont = (h['continuous'] - self.norm_biases[2]) / self.norm_values[2]
 
-        if self.include_charges:
-            h_int = h_int * node_mask
+        # if self.include_charges:
+            # h_int = h_int * node_mask
 
         # Create new h dictionary.
-        h = {'categorical': h_cat, 'integer': h_int}
+        h = {'categorical': h_cat, 'integer': h_int, 'continuous': h_cont}
 
         return x, h, delta_log_px
 
-    def unnormalize(self, x, h_cat, h_int, node_mask):
+    def unnormalize(self, x, h_cat, h_cont, node_mask):
         x = x * self.norm_values[0]
         h_cat = h_cat * self.norm_values[1] + self.norm_biases[1]
         h_cat = h_cat * node_mask
-        h_int = h_int * self.norm_values[2] + self.norm_biases[2]
+        h_cont = h_cont * self.norm_values[2] + self.norm_biases[2]
 
-        if self.include_charges:
-            h_int = h_int * node_mask
+        # if self.include_charges:
+            # h_int = h_int * node_mask
 
-        return x, h_cat, h_int
+        return x, h_cat, h_cont
 
     def unnormalize_z(self, z, node_mask):
         # Parse from z
         x, h_cat = z[:, :, 0:self.n_dims], z[:, :, self.n_dims:self.n_dims+self.num_classes]
-        h_int = z[:, :, self.n_dims+self.num_classes:self.n_dims+self.num_classes+1]
-        assert h_int.size(2) == self.include_charges
+        h_cont = z[:, :, self.n_dims+self.num_classes:self.n_dims+self.num_classes+self.n_cont]
+        # assert h_int.size(2) == self.include_charges
 
         # Unnormalize
-        x, h_cat, h_int = self.unnormalize(x, h_cat, h_int, node_mask)
-        output = torch.cat([x, h_cat, h_int], dim=2)
+        x, h_cat, h_cont = self.unnormalize(x, h_cat, h_cont, node_mask)
+        output = torch.cat([x, h_cat, h_cont], dim=2)
         return output
 
     def sigma_and_alpha_t_given_s(self, gamma_t: torch.Tensor, gamma_s: torch.Tensor, target_tensor: torch.Tensor):
@@ -485,13 +494,16 @@ class EnVariationalDiffusion(torch.nn.Module):
         xh = self.sample_normal(mu=mu_x, sigma=sigma_x, node_mask=node_mask, fix_noise=fix_noise)
 
         x = xh[:, :, :self.n_dims]
+        assert self.n_dims == 3
+        assert z0.shape(-1) == self.n_dims+self.num_classes+self.n_cont
 
-        h_int = z0[:, :, -1:] if self.include_charges else torch.zeros(0).to(z0.device)
-        x, h_cat, h_int = self.unnormalize(x, z0[:, :, self.n_dims:-1], h_int, node_mask)
-
+        # h_cont = z0[:, :, -1:] if self.include_charges else torch.zeros(0).to(z0.device)
+        x, h_cat, h_cont = self.unnormalize(x, z0[:, :, self.n_dims:self.n_dims+self.num_classes], z0[:, :, self.n_dims+self.num_classes:], node_mask)
+        self.num_classes = 20
+        # print("self.num_classes", self.num_classes)
         h_cat = F.one_hot(torch.argmax(h_cat, dim=2), self.num_classes) * node_mask
-        h_int = torch.round(h_int).long() * node_mask
-        h = {'integer': h_int, 'categorical': h_cat}
+        # h_cont = torch.round(h_cont).long() * node_mask
+        h = {'continuous': h_cont, 'categorical': h_cat}
         return x, h
 
     def sample_normal(self, mu, sigma, node_mask, fix_noise=False):
@@ -598,9 +610,14 @@ class EnVariationalDiffusion(torch.nn.Module):
         eps = self.sample_combined_position_feature_noise(
             n_samples=x.size(0), n_nodes=x.size(1), node_mask=node_mask)
 
+        # print("h", h)
         # Concatenate x, h[integer] and h[categorical].
-        xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
+        xh = torch.cat([x, h['categorical'], h['continuous']], dim=2)
         # Sample z_t given x, h for timestep t, from q(z_t | x, h)
+        # print("xh", xh.shape, xh)
+        # print("t, alpha_t, sigma_t", t, alpha_t, sigma_t)
+        # print("xh.shape", xh.shape)
+        # print("eps.shape", eps.shape)
         z_t = alpha_t * xh + sigma_t * eps
 
         diffusion_utils.assert_mean_zero_with_mask(z_t[:, :, :self.n_dims], node_mask)
@@ -610,6 +627,7 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         # Compute the error.
         error = self.compute_error(net_out, gamma_t, eps)
+        # print("error", error)
 
         if self.training and self.loss_type == 'l2':
             SNR_weight = torch.ones_like(error)
@@ -661,8 +679,10 @@ class EnVariationalDiffusion(torch.nn.Module):
         else:
             # Computes the L_0 term (even if gamma_t is not actually gamma_0)
             # and this will later be selected via masking.
-            loss_term_0 = -self.log_pxh_given_z0_without_constants(
-                x, h, z_t, gamma_t, eps, net_out, node_mask)
+            # TODO: roberthoenig: Correctly compute loss_term_0
+            loss_term_0 = 0
+            # loss_term_0 = -self.log_pxh_given_z0_without_constants(
+                # x, h, z_t, gamma_t, eps, net_out, node_mask)
 
             t_is_not_zero = 1 - t_is_zero
 
@@ -690,7 +710,11 @@ class EnVariationalDiffusion(torch.nn.Module):
         Computes the loss (type l2 or NLL) if training. And if eval then always computes NLL.
         """
         # Normalize data, take into account volume change in x.
+        # print("x before normalization:", x)
+        # print("h before normalization:", h)
         x, h, delta_log_px = self.normalize(x, h, node_mask)
+        # print("x after normalization:", x)
+        # print("h after normalization:", h)
 
         # Reset delta_log_px if not vlb objective.
         if self.training and self.loss_type == 'l2':
@@ -729,6 +753,11 @@ class EnVariationalDiffusion(torch.nn.Module):
         diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
         diffusion_utils.assert_mean_zero_with_mask(eps_t[:, :, :self.n_dims], node_mask)
         mu = zt / alpha_t_given_s - (sigma2_t_given_s / alpha_t_given_s / sigma_t) * eps_t
+        print("zt", zt.abs().mean())
+        print("mu", mu.abs().mean())
+        print("eps_t", eps_t.abs().mean())
+        print("eps_fac", (sigma2_t_given_s / alpha_t_given_s / sigma_t) )
+        print("alpha_t_given_s", alpha_t_given_s)
 
         # Compute sigma for p(zs | zt).
         sigma = sigma_t_given_s * sigma_s / sigma_t
@@ -800,22 +829,28 @@ class EnVariationalDiffusion(torch.nn.Module):
         z = self.sample_combined_position_feature_noise(n_samples, n_nodes, node_mask)
 
         diffusion_utils.assert_mean_zero_with_mask(z[:, :, :self.n_dims], node_mask)
-
+        print("keep_frames = ", keep_frames)
+        print("self.T", self.T)
+        print("z.size", z.size())
         if keep_frames is None:
             keep_frames = self.T
         else:
             assert keep_frames <= self.T
         chain = torch.zeros((keep_frames,) + z.size(), device=z.device)
+        print("chain.size", chain.size())
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        print("self.TTTT", self.T)
         for s in reversed(range(0, self.T)):
             s_array = torch.full((n_samples, 1), fill_value=s, device=z.device)
             t_array = s_array + 1
             s_array = s_array / self.T
             t_array = t_array / self.T
-
+            # print("s_array", s_array)
+            # print("t_array", t_array)
             z = self.sample_p_zs_given_zt(
                 s_array, t_array, z, node_mask, edge_mask, context)
+            # print("z.shape 838", z.shape)
 
             diffusion_utils.assert_mean_zero_with_mask(z[:, :, :self.n_dims], node_mask)
 
@@ -824,11 +859,14 @@ class EnVariationalDiffusion(torch.nn.Module):
             chain[write_index] = self.unnormalize_z(z, node_mask)
 
         # Finally sample p(x, h | z_0).
+        print("z.shape", z.shape)
         x, h = self.sample_p_xh_given_z0(z, node_mask, edge_mask, context)
 
         diffusion_utils.assert_mean_zero_with_mask(x[:, :, :self.n_dims], node_mask)
 
-        xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
+        xh = torch.cat([x, h['categorical'], h['continuous']], dim=2)
+        print(x.size(), h['categorical'].size(), h['continuous'].size())
+        print("xh.size()", xh.size())
         chain[0] = xh  # Overwrite last frame with the resulting x and h.
 
         chain_flat = chain.view(n_samples * keep_frames, *z.size()[1:])
