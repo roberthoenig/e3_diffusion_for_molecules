@@ -72,10 +72,10 @@ class EquivariantUpdate(nn.Module):
         self.tanh = tanh
         self.coords_range = coords_range
         input_edge = hidden_nf * 2 + edges_in_d
-        layer = nn.Linear(hidden_nf, 1, bias=False)
+        layer = nn.Linear(hidden_nf, 3, bias=False)
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
         self.coord_mlp = nn.Sequential(
-            nn.Linear(input_edge, hidden_nf),
+            nn.Linear(input_edge+3, hidden_nf),
             act_fn,
             nn.Linear(hidden_nf, hidden_nf),
             act_fn,
@@ -85,11 +85,8 @@ class EquivariantUpdate(nn.Module):
 
     def coord_model(self, h, coord, edge_index, coord_diff, edge_attr, edge_mask):
         row, col = edge_index
-        input_tensor = torch.cat([h[row], h[col], edge_attr], dim=1)
-        if self.tanh:
-            trans = coord_diff * torch.tanh(self.coord_mlp(input_tensor)) * self.coords_range
-        else:
-            trans = coord_diff * self.coord_mlp(input_tensor)
+        input_tensor = torch.cat([h[row], h[col], edge_attr, coord_diff], dim=1)
+        trans = self.coord_mlp(input_tensor)
         if edge_mask is not None:
             trans = trans * edge_mask
         agg = unsorted_segment_sum(trans, row, num_segments=coord.size(0),
