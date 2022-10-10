@@ -495,7 +495,7 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         x = xh[:, :, :self.n_dims]
         assert self.n_dims == 3
-        assert z0.shape(-1) == self.n_dims+self.num_classes+self.n_cont
+        assert z0.shape[-1] == self.n_dims+self.num_classes+self.n_cont
 
         # h_cont = z0[:, :, -1:] if self.include_charges else torch.zeros(0).to(z0.device)
         x, h_cat, h_cont = self.unnormalize(x, z0[:, :, self.n_dims:self.n_dims+self.num_classes], z0[:, :, self.n_dims+self.num_classes:], node_mask)
@@ -515,39 +515,28 @@ class EnVariationalDiffusion(torch.nn.Module):
     def log_pxh_given_z0_without_constants(
             self, x, h, z_t, gamma_0, eps, net_out, node_mask, epsilon=1e-10):
         # Discrete properties are predicted directly from z_t.
-        z_h_cat = z_t[:, :, self.n_dims:-1] if self.include_charges else z_t[:, :, self.n_dims:]
-        z_h_int = z_t[:, :, -1:] if self.include_charges else torch.zeros(0).to(z_t.device)
+        z_h_cat = z_t[:, :, self.n_dims:self.n_dims+self.num_classes]
 
         # Take only part over x.
         eps_x = eps[:, :, :self.n_dims]
+        eps_h_cont = eps[:, :, self.n_dims+self.num_classes:self.n_dims+self.num_classes+self.n_cont]
         net_x = net_out[:, :, :self.n_dims]
+        net_h = net_out[:, :, self.n_dims+self.num_classes:self.n_dims+self.num_classes+self.n_cont]
 
         # Compute sigma_0 and rescale to the integer scale of the data.
         sigma_0 = self.sigma(gamma_0, target_tensor=z_t)
         sigma_0_cat = sigma_0 * self.norm_values[1]
-        sigma_0_int = sigma_0 * self.norm_values[2]
 
         # Computes the error for the distribution N(x | 1 / alpha_0 z_0 + sigma_0/alpha_0 eps_0, sigma_0 / alpha_0),
         # the weighting in the epsilon parametrization is exactly '1'.
         log_p_x_given_z_without_constants = -0.5 * self.compute_error(net_x, gamma_0, eps_x)
+        log_ph_cont = -0.5 * self.compute_error(net_h, gamma_0, eps_h_cont)
 
         # Compute delta indicator masks.
-        h_integer = torch.round(h['integer'] * self.norm_values[2] + self.norm_biases[2]).long()
+        # h_integer = torch.round(h['integer'] * self.norm_values[2] + self.norm_biases[2]).long()
         onehot = h['categorical'] * self.norm_values[1] + self.norm_biases[1]
 
-        estimated_h_integer = z_h_int * self.norm_values[2] + self.norm_biases[2]
         estimated_h_cat = z_h_cat * self.norm_values[1] + self.norm_biases[1]
-        assert h_integer.size() == estimated_h_integer.size()
-
-        h_integer_centered = h_integer - estimated_h_integer
-
-        # Compute integral from -0.5 to 0.5 of the normal distribution
-        # N(mean=h_integer_centered, stdev=sigma_0_int)
-        log_ph_integer = torch.log(
-            cdf_standard_gaussian((h_integer_centered + 0.5) / sigma_0_int)
-            - cdf_standard_gaussian((h_integer_centered - 0.5) / sigma_0_int)
-            + epsilon)
-        log_ph_integer = sum_except_batch(log_ph_integer * node_mask)
 
         # Centered h_cat around 1, since onehot encoded.
         centered_h_cat = estimated_h_cat - 1
@@ -567,8 +556,8 @@ class EnVariationalDiffusion(torch.nn.Module):
         # representation.
         log_ph_cat = sum_except_batch(log_probabilities * onehot * node_mask)
 
-        # Combine categorical and integer log-probabilities.
-        log_p_h_given_z = log_ph_integer + log_ph_cat
+        # Combine categorical and continuous log-probabilities.
+        log_p_h_given_z = log_ph_cont + log_ph_cat
 
         # Combine log probabilities for x and h.
         log_p_xh_given_z = log_p_x_given_z_without_constants + log_p_h_given_z
@@ -681,9 +670,8 @@ class EnVariationalDiffusion(torch.nn.Module):
             # and this will later be selected via masking.
             # TODO: roberthoenig: Correctly compute loss_term_0
             loss_term_0 = 0
-            # loss_term_0 = -self.log_pxh_given_z0_without_constants(
-                # x, h, z_t, gamma_t, eps, net_out, node_mask)
-
+            loss_term_0 = -self.log_pxh_given_z0_without_constants(
+                x, h, z_t, gamma_t, eps, net_out, node_mask)
             t_is_not_zero = 1 - t_is_zero
 
             loss_t = loss_term_0 * t_is_zero.squeeze() + t_is_not_zero.squeeze() * loss_t_larger_than_zero
@@ -753,11 +741,6 @@ class EnVariationalDiffusion(torch.nn.Module):
         diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
         diffusion_utils.assert_mean_zero_with_mask(eps_t[:, :, :self.n_dims], node_mask)
         mu = zt / alpha_t_given_s - (sigma2_t_given_s / alpha_t_given_s / sigma_t) * eps_t
-        print("zt", zt.abs().mean())
-        print("mu", mu.abs().mean())
-        print("eps_t", eps_t.abs().mean())
-        print("eps_fac", (sigma2_t_given_s / alpha_t_given_s / sigma_t) )
-        print("alpha_t_given_s", alpha_t_given_s)
 
         # Compute sigma for p(zs | zt).
         sigma = sigma_t_given_s * sigma_s / sigma_t
@@ -829,18 +812,13 @@ class EnVariationalDiffusion(torch.nn.Module):
         z = self.sample_combined_position_feature_noise(n_samples, n_nodes, node_mask)
 
         diffusion_utils.assert_mean_zero_with_mask(z[:, :, :self.n_dims], node_mask)
-        print("keep_frames = ", keep_frames)
-        print("self.T", self.T)
-        print("z.size", z.size())
         if keep_frames is None:
             keep_frames = self.T
         else:
             assert keep_frames <= self.T
         chain = torch.zeros((keep_frames,) + z.size(), device=z.device)
-        print("chain.size", chain.size())
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
-        print("self.TTTT", self.T)
         for s in reversed(range(0, self.T)):
             s_array = torch.full((n_samples, 1), fill_value=s, device=z.device)
             t_array = s_array + 1
@@ -859,14 +837,11 @@ class EnVariationalDiffusion(torch.nn.Module):
             chain[write_index] = self.unnormalize_z(z, node_mask)
 
         # Finally sample p(x, h | z_0).
-        print("z.shape", z.shape)
         x, h = self.sample_p_xh_given_z0(z, node_mask, edge_mask, context)
 
         diffusion_utils.assert_mean_zero_with_mask(x[:, :, :self.n_dims], node_mask)
 
         xh = torch.cat([x, h['categorical'], h['continuous']], dim=2)
-        print(x.size(), h['categorical'].size(), h['continuous'].size())
-        print("xh.size()", xh.size())
         chain[0] = xh  # Overwrite last frame with the resulting x and h.
 
         chain_flat = chain.view(n_samples * keep_frames, *z.size()[1:])
