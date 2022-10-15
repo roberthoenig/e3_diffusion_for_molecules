@@ -26,6 +26,7 @@ import time
 import pickle
 from qm9.utils import prepare_context, compute_mean_mad
 from train_test import train_epoch, test, analyze_and_save
+import datetime
 
 
 # ### Initialize arguments
@@ -49,7 +50,7 @@ args = Namespace(
     diffusion_noise_precision=1e-05,
     diffusion_loss_type='l2',
     n_epochs=30000,
-    batch_size=64,
+    batch_size=32,
     lr=0.0001,
     brute_force=False,
     actnorm=True,
@@ -266,7 +267,8 @@ for epoch in range(args.start_epoch, args.n_epochs):
         torch.save(mean_losses, f"{chckpt_dir}/mean_losses.pkl")
         torch.save(model, f"{chckpt_dir}/model_chckpt_dir_{epoch}.pt")
     if epoch % 10 == 0:
-        print(f"Epoch {epoch}, mean loss {mean_loss}")
+        time_str = datetime.datetime.fromtimestamp(time.time()).isoformat()
+        print(f"Epoch {epoch}, mean loss {mean_loss}, time {time_str}")
         s = save_and_sample_chain(model_ema, args, device, dataset_info, prop_dist, epoch=0,
                       batch_id=0)
         samples.append(s)
