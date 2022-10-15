@@ -49,7 +49,7 @@ args = Namespace(
     diffusion_noise_precision=1e-05,
     diffusion_loss_type='l2',
     n_epochs=10000,
-    batch_size=32,
+    batch_size=64,
     lr=0.0001,
     brute_force=False,
     actnorm=True,
@@ -58,9 +58,9 @@ args = Namespace(
     condition_time=True,
     clip_grad=True,
     trace='hutch',
-    n_layers=3,
+    n_layers=5,
     inv_sublayers=1,
-    nf=64,
+    nf=128,
     tanh=True,
     attention=True,
     norm_constant=1,
@@ -168,7 +168,7 @@ args.context_node_nf = context_node_nf
 model, nodes_dist, prop_dist = get_model(args, device, dataset_info, dataloaders['train'])
 if prop_dist is not None:
     prop_dist.set_normalizer(property_norms)
-model = torch.load("correct_model_checkpoints/model_scenes_9000.pt")
+# model = torch.load("correct_model_checkpoints/model_scenes_9000.pt")
 model = model.to(device)
 optim = get_optim(args, model)
 # print(model)
@@ -263,6 +263,7 @@ for epoch in range(args.start_epoch, args.n_epochs):
     # print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
 
     if epoch % 1000 == 0:
+        torch.save(mean_losses, f"{chckpt_dir}/mean_losses.pkl")
         torch.save(model, f"{chckpt_dir}/model_chckpt_dir_{epoch}.pt")
     if epoch % 10 == 0:
         print(f"Epoch {epoch}, mean loss {mean_loss}")
@@ -276,3 +277,5 @@ for epoch in range(args.start_epoch, args.n_epochs):
         sample_norm = x[-1].abs().mean().item()
         print("sample norm", sample_norm)
         sample_norms.append(sample_norm)
+    if epoch == args.start_epoch:
+        print(torch.cuda.memory_summary(),flush=True)
