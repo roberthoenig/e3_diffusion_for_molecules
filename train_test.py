@@ -43,8 +43,7 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         assert_mean_zero_with_mask(x, node_mask)
         # print("scales.shape", scales.shape)
         # print("rotations.shape", rotations.shape)
-        # h = {'categorical': torch.ones(x.size(0), x.size(1), 1), 'continuous': torch.ones(x.size(0), x.size(1), 1)}
-        h = {'categorical': torch.ones(x.size(0), x.size(1), 0), 'continuous': torch.ones(x.size(0), x.size(1), 0)}
+        h = {'categorical': one_hot, 'continuous': torch.cat([scales, rotations], dim=-1)}
 
         if len(args.conditioning) > 0:
             context = qm9utils.prepare_context(args.conditioning, data, property_norms).to(device, dtype)
@@ -94,10 +93,8 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
             if len(args.conditioning) > 0:
                 vis.visualize_chain("outputs/%s/epoch_%d/conditional/" % (args.exp_name, epoch), dataset_info,
                                     wandb=wandb, mode='conditional')
-        wandb.log({"Batch NLL": nll.item()}, commit=True)
         if args.break_train_epoch:
             break
-    wandb.log({"Train Epoch NLL": np.mean(nll_epoch)}, commit=False)
     return torch.tensor(loss_vals).mean()
 
 
