@@ -53,34 +53,21 @@ def preprocess_input(one_hot, charges, charge_power, charge_scale, device):
     return atom_scalars
 
 
-def prepare_context(conditioning, minibatch, property_norms):
+def prepare_context(conditioning, minibatch, property_norms, model, device):
     batch_size, n_nodes, _ = minibatch['positions'].size()
-    node_mask = minibatch['atom_mask'].unsqueeze(2)
+    node_mask = minibatch['scene_mask'].unsqueeze(2).to(device)
     context_node_nf = 0
     context_list = []
     for key in conditioning:
-        properties = minibatch[key]
-        properties = (properties - property_norms[key]['mean']) / property_norms[key]['mad']
-        if len(properties.size()) == 1:
-            # Global feature.
-            assert properties.size() == (batch_size,)
-            reshaped = properties.view(batch_size, 1, 1).repeat(1, n_nodes, 1)
+        if key == 'floor_plan':
+            properties = minibatch[key].to(device)
+            properties = model.floor_plan_conditioner(properties)
+            assert properties.size(0) == batch_size
+            reshaped = properties.view(batch_size, 1, -1).repeat(1, n_nodes, 1)
             context_list.append(reshaped)
-            context_node_nf += 1
-        elif len(properties.size()) == 2 or len(properties.size()) == 3:
-            # Node feature.
-            assert properties.size()[:2] == (batch_size, n_nodes)
-
-            context_key = properties
-
-            # Inflate if necessary.
-            if len(properties.size()) == 2:
-                context_key = context_key.unsqueeze(2)
-
-            context_list.append(context_key)
-            context_node_nf += context_key.size(2)
+            context_node_nf += properties.size(1)
         else:
-            raise ValueError('Invalid tensor size, more than 3 axes.')
+            raise ValueError(f'Invalid key {key}')
     # Concatenate
     context = torch.cat(context_list, dim=2)
     # Mask disabled nodes!

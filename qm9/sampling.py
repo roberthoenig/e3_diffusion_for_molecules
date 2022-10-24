@@ -51,25 +51,21 @@ def reverse_tensor(x):
     return x[torch.arange(x.size(0) - 1, -1, -1)]
 
 
-def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
+def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None, n_nodes=None, context=None):
     n_samples = 1
-    if args.dataset == 'qm9' or args.dataset == 'qm9_second_half' or args.dataset == 'qm9_first_half':
-        n_nodes = 19
-    elif args.dataset == 'geom':
-        n_nodes = 44
-    elif args.dataset == '3rscan':
-        n_nodes = args.n_nodes
-    else:
-        raise ValueError()
+    if n_nodes is None:
+        if args.dataset == 'qm9' or args.dataset == 'qm9_second_half' or args.dataset == 'qm9_first_half':
+            n_nodes = 19
+        elif args.dataset == 'geom':
+            n_nodes = 44
+        elif args.dataset == '3rscan':
+            n_nodes = args.n_nodes
+        else:
+            raise ValueError()
 
-    # TODO FIX: This conditioning just zeros.
-    if args.context_node_nf > 0:
-        context = prop_dist.sample(n_nodes).unsqueeze(1).unsqueeze(0)
-        context = context.repeat(1, n_nodes, 1).to(device)
-        #context = torch.zeros(n_samples, n_nodes, args.context_node_nf).to(device)
-    else:
-        context = None
-
+    context = context.unsqueeze(0).to(device)
+    context = flow.floor_plan_conditioner(context).to(device)
+    context = context.repeat(1, n_nodes, 1)
     node_mask = torch.ones(n_samples, n_nodes, 1).to(device)
 
     edge_mask = (1 - torch.eye(n_nodes)).unsqueeze(0)
@@ -93,10 +89,10 @@ def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
 
             # Prepare entire chain.
             # pos, cat, scale, rot
-            x = chain[:, :, 0:3]
-            one_hot = chain[:, :, 3:3+20]
-            one_hot = F.one_hot(torch.argmax(one_hot, dim=2), num_classes=20)
-            cont = chain[:, :, 3+20:3+20+4]
+            x = chain[:, :, :flow.n_dims]
+            one_hot = chain[:, :, flow.n_dims:flow.n_dims+flow.num_classes]
+            one_hot = F.one_hot(torch.argmax(one_hot, dim=2), num_classes=flow.num_classes)
+            cont = chain[:, :, flow.n_dims+flow.num_classes:flow.n_dims+flow.num_classes+flow.n_cont]
             # charges = torch.round(chain[:, :, -1:]).long()
 
             # if mol_stable:

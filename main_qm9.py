@@ -38,10 +38,10 @@ from argparse import Namespace
 
 args = Namespace(
     n_cont = 4,
-    n_onehot = 20,
+    n_onehot = 23,
     n_nodes=10,
     n_dims = 3,
-    dataset_path="../bounding_boxes_for_e3_repo.pkl",
+    dataset_path="3dfront_bounding_boxes_for_e3_repo.pkl",
     exp_name='debug_10',
     model='egnn_dynamics',
     probabilistic_model='diffusion',
@@ -59,7 +59,7 @@ args = Namespace(
     condition_time=True,
     clip_grad=True,
     trace='hutch',
-    n_layers=5,
+    n_layers=7,
     inv_sublayers=1,
     nf=128,
     tanh=True,
@@ -81,7 +81,7 @@ args = Namespace(
     num_workers=0,
     test_epochs=10,
     data_augmentation=False,
-    conditioning=[],
+    conditioning=['floor_plan'],
     resume=None,
     start_epoch=0,
     ema_decay=0.999,
@@ -147,6 +147,7 @@ utils.create_folders(args)
 # ### Retrieve QM9 dataloaders
 
 dataloaders, charge_scale = dataset.retrieve_dataloaders(args)
+floor_plans = torch.cat([x['floor_plan'] for x in dataloaders['test']], dim=0)
 
 # ### More args processing, create model
 
@@ -155,9 +156,8 @@ dataloaders, charge_scale = dataset.retrieve_dataloaders(args)
 
 if len(args.conditioning) > 0:
     print(f'Conditioning on {args.conditioning}')
-    property_norms = compute_mean_mad(dataloaders, args.conditioning, args.dataset)
-    context_dummy = prepare_context(args.conditioning, data_dummy, property_norms)
-    context_node_nf = context_dummy.size(2)
+    property_norms = None
+    context_node_nf = 64
 else:
     context_node_nf = 0
     property_norms = None
@@ -229,14 +229,18 @@ best_nll_test = 1e8
 
 
 def save_and_sample_chain(model, args, device, dataset_info, prop_dist,
-                          epoch=0, id_from=0, batch_id=''):
-    one_hot, charges, x = sample_chain(args=args, device=device, flow=model,
-                                       n_tries=1, dataset_info=dataset_info, prop_dist=prop_dist)
+                          epoch=0, id_from=0, batch_id='', n_nodes=None):
+    rand_idx = torch.randint(low=0, high=len(floor_plans), size=(1,)).item()
+    context = floor_plans[rand_idx]
+    one_hot, charges, x = sample_chain(
+            args=args, device=device, flow=model,
+            n_tries=1, dataset_info=dataset_info, prop_dist=prop_dist,n_nodes=n_nodes,
+            context=context)
 
     # vis.save_xyz_file(f'outputs/{args.exp_name}/epoch_{epoch}_{batch_id}/chain/',
                     #   one_hot, charges, x, dataset_info, id_from, name='chain')
 
-    return one_hot, charges, x
+    return one_hot, charges, x, context
 
 
 # In[15]:
@@ -245,6 +249,7 @@ def save_and_sample_chain(model, args, device, dataset_info, prop_dist,
 mean_losses = []
 sample_norms = []
 samples = []
+contexts = []
 
 import sys
 chckpt_dir = sys.argv[1]
@@ -265,19 +270,21 @@ for epoch in range(args.start_epoch, args.n_epochs):
 
     if epoch % 1000 == 0:
         torch.save(mean_losses, f"{chckpt_dir}/mean_losses.pkl")
+        torch.save({'samples': samples, 'contexts': contexts}, f"{chckpt_dir}/samples_and_contexts.pkl")
         torch.save(model, f"{chckpt_dir}/model_chckpt_dir_{epoch}.pt")
     if epoch % 10 == 0:
         time_str = datetime.datetime.fromtimestamp(time.time()).isoformat()
         print(f"Epoch {epoch}, mean loss {mean_loss}, time {time_str}")
         s = save_and_sample_chain(model_ema, args, device, dataset_info, prop_dist, epoch=0,
-                      batch_id=0)
+                      batch_id=0, n_nodes=7)
         samples.append(s)
         # sample_different_sizes_and_save(model_ema, nodes_dist, args, device, dataset_info,
                                         # prop_dist, epoch=epoch)
         # print(f'Sampling took {time.time() - start:.2f} seconds')
-        _,_,x = s
+        _,_,x,context = s
         sample_norm = x[-1].abs().mean().item()
         print("sample norm", sample_norm)
+        contexts.append(context)
         sample_norms.append(sample_norm)
-    if epoch == args.start_epoch:
+    if epoch == args.start_epoch and torch.cuda.is_available():
         print(torch.cuda.memory_summary(),flush=True)

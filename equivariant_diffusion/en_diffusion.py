@@ -2,6 +2,7 @@ from equivariant_diffusion import utils
 import numpy as np
 import math
 import torch
+import torchvision
 from egnn import models
 from torch.nn import functional as F
 from equivariant_diffusion import utils as diffusion_utils
@@ -294,6 +295,19 @@ class EnVariationalDiffusion(torch.nn.Module):
         self.norm_biases = norm_biases
         self.register_buffer('buffer', torch.zeros(1))
 
+        self.floor_plan_conditioner = torchvision.models.squeezenet1_1()
+        self.floor_plan_conditioner.features[0] = torch.nn.Conv2d(1, 64, kernel_size=(7,7), stride=(2,2))
+        self.floor_plan_conditioner.classifier = torch.nn.Sequential(
+            torch.nn.AvgPool2d(13, 13),
+            torch.nn.Flatten(),
+            torch.nn.Linear(512, 64),
+        )
+        self.floor_plan_conditioner = torch.nn.Sequential(
+            torchvision.transforms.Resize(224),
+            torchvision.transforms.Pad(int((256 - 224) / 2)),
+            self.floor_plan_conditioner,
+        )
+
         if noise_schedule != 'learned':
             self.check_issues_norm_values()
 
@@ -499,7 +513,6 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         # h_cont = z0[:, :, -1:] if self.include_charges else torch.zeros(0).to(z0.device)
         x, h_cat, h_cont = self.unnormalize(x, z0[:, :, self.n_dims:self.n_dims+self.num_classes], z0[:, :, self.n_dims+self.num_classes:], node_mask)
-        self.num_classes = 20
         # print("self.num_classes", self.num_classes)
         h_cat = F.one_hot(torch.argmax(h_cat, dim=2), self.num_classes) * node_mask
         # h_cont = torch.round(h_cont).long() * node_mask

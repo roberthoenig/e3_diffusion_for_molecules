@@ -46,7 +46,7 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         h = {'categorical': one_hot, 'continuous': torch.cat([scales, rotations], dim=-1)}
 
         if len(args.conditioning) > 0:
-            context = qm9utils.prepare_context(args.conditioning, data, property_norms).to(device, dtype)
+            context = qm9utils.prepare_context(args.conditioning, data, property_norms, model, device).to(device, dtype)
             assert_correctly_masked(context, node_mask)
         else:
             context = None
