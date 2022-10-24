@@ -30,3 +30,12 @@ qm9/property_prediction/outputs/*
 qm9_conditional.sh
 figures/
 geom_drugs.sh
+*.png
+*.pt
+*.obj
+*.gif
+.ipynb_checkpoints/
+*.npy
+*.json
+*.pt
+*.pkl
