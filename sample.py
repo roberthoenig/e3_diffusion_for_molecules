@@ -203,9 +203,9 @@ def save_and_sample_chain(model, args, device, dataset_info, prop_dist,
 
 import sys
 floorplan_idx = sys.argv[1]
-
-s = save_and_sample_chain(model_ema, args, device, dataset_info, None, epoch=0,
-                batch_id=0, n_nodes=7)
-_,_,x,context = s
-print("x", x)
-print("context", context)
+samples = []
+for _ in enumerate(range(20)):
+    s = save_and_sample_chain(model_ema, args, device, dataset_info, None, epoch=0,
+                    batch_id=0, n_nodes=7)
+    samples.append(s)
+torch.save(samples, f"samples_{floorplan_idx}.pkl")
