@@ -206,6 +206,6 @@ floorplan_idx = sys.argv[1]
 samples = []
 for _ in enumerate(range(20)):
     s = save_and_sample_chain(model_ema, args, device, dataset_info, None, epoch=0,
-                    batch_id=0, n_nodes=7, floorplan_idx=floorplan_idx)
+                    batch_id=0, n_nodes=7, floor_plan_idx=floorplan_idx)
     samples.append(s)
 torch.save(samples, f"samples_{floorplan_idx}.pkl")
